@@ -1,0 +1,13 @@
+{
+  "name": "Sanzō Wada Palette",
+  "id": "sanzo-wada-palette",
+  "api": "1.0.0",
+  "main": "code.js",
+  "ui": "ui.html",
+  "editorType": ["figma"],
+  "permissions": ["teamlibrary"],
+  "networkAccess": {
+    "allowedDomains": ["none"],
+    "reasoning": "All combination data is bundled. The plugin only reads and writes Figma variables."
+  }
+}

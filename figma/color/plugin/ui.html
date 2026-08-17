@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root { font-family: Inter, -apple-system, sans-serif; font-size: 11px; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0;
+    background: var(--figma-color-bg);
+    color: var(--figma-color-text);
+    display: flex; flex-direction: column; height: 100vh;
+  }
+  .pad { padding: 10px 12px; }
+  .sec { border-bottom: 1px solid var(--figma-color-border); }
+  .row { display: flex; align-items: center; gap: 6px; }
+  .spread { justify-content: space-between; }
+  h2 {
+    font-size: 10px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--figma-color-text-secondary); margin: 0 0 8px; font-weight: 600;
+  }
+  button {
+    font: inherit; cursor: pointer; border-radius: 5px;
+    border: 1px solid var(--figma-color-border);
+    background: var(--figma-color-bg); color: var(--figma-color-text);
+    padding: 4px 9px;
+  }
+  button:hover { background: var(--figma-color-bg-hover); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button:disabled:hover { background: var(--figma-color-bg); }
+  button.on {
+    background: var(--figma-color-bg-brand); color: var(--figma-color-text-onbrand);
+    border-color: transparent;
+  }
+  button.ghost { border-color: transparent; color: var(--figma-color-text-secondary); }
+  input {
+    font: inherit; padding: 4px 7px; border-radius: 5px;
+    border: 1px solid var(--figma-color-border);
+    background: var(--figma-color-bg-secondary); color: var(--figma-color-text);
+    outline: none; min-width: 0;
+  }
+  input:focus { border-color: var(--figma-color-border-brand-strong); }
+
+  /* banner */
+  #banner { display: none; padding: 10px 12px; background: var(--figma-color-bg-warning-tertiary); }
+  #banner.show { display: block; }
+  #banner p { margin: 0 0 8px; line-height: 1.45; }
+
+  /* combination grid */
+  #gridWrap { overflow-y: auto; flex: 1 1 auto; min-height: 120px; }
+  #grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .cell { border: 2px solid transparent; border-radius: 5px; padding: 0; overflow: hidden; cursor: pointer; }
+  .cell:hover { border-color: var(--figma-color-border-brand-strong); }
+  .cell.active { border-color: var(--figma-color-bg-brand); }
+  .cell .bars { display: flex; height: 58px; }
+  .cell .bars i { flex: 1; }
+  .cell .id {
+    display: block; font-size: 9px; padding: 2px 0;
+    color: var(--figma-color-text-secondary); text-align: center;
+  }
+
+  /* member strip */
+  .members { display: flex; gap: 6px; }
+  .member { flex: 1; text-align: center; }
+  .member .sw { height: 30px; border-radius: 4px; border: 1px solid var(--figma-color-border); }
+  .member .lbl { font-size: 9px; color: var(--figma-color-text-secondary); margin-top: 3px;
+                 overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* roles */
+  .role { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+  .role .nm { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .seg { display: flex; gap: 3px; }
+  .seg button { padding: 3px 0; width: 26px; text-align: center; position: relative; }
+  .seg button .dot {
+    display: block; height: 10px; border-radius: 2px; margin: 0 3px;
+    border: 1px solid var(--figma-color-border);
+  }
+  .parked { color: var(--figma-color-text-warning); font-size: 9px; white-space: nowrap; }
+  .muted { color: var(--figma-color-text-secondary); }
+
+  /* scan — takes over the combination grid's space while open */
+  #scanSec { display: none; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+  #scanList { overflow-y: auto; flex: 1 1 auto; min-height: 60px; }
+  .cand {
+    display: flex; align-items: center; gap: 7px; padding: 5px 0;
+    border-top: 1px solid var(--figma-color-border);
+  }
+  .cand:first-child { border-top: none; }
+  .cand.done { opacity: .45; }
+  .cand .sw {
+    width: 28px; height: 28px; flex: 0 0 auto; cursor: pointer;
+    border-radius: 4px; border: 1px solid var(--figma-color-border);
+  }
+  .cand .sw:hover { border-color: var(--figma-color-border-brand-strong); }
+  .cand .meta { flex: 1 1 auto; min-width: 0; }
+  .cand .top { display: flex; align-items: center; gap: 4px; }
+  .cand .top input { flex: 1 1 auto; padding: 2px 6px; }
+  .cand .sub {
+    font-size: 9px; color: var(--figma-color-text-secondary); margin-top: 2px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .cand .sub b { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .tag {
+    font-size: 9px; padding: 1px 5px; border-radius: 3px; white-space: nowrap;
+    background: var(--figma-color-bg-secondary); color: var(--figma-color-text-secondary);
+  }
+  .tag.hit { background: var(--figma-color-bg-brand); color: var(--figma-color-text-onbrand); }
+  #scanScope button { width: auto; padding: 3px 7px; }
+  #scanSummary { margin-bottom: 6px; line-height: 1.4; }
+  #scanSummary .warn { color: var(--figma-color-text-warning); }
+
+  #toast {
+    padding: 7px 12px; font-size: 10px;
+    background: var(--figma-color-bg-secondary);
+    color: var(--figma-color-text-secondary);
+    border-top: 1px solid var(--figma-color-border);
+    min-height: 26px;
+  }
+  #toast.err { background: var(--figma-color-bg-danger-tertiary); color: var(--figma-color-text-danger); }
+  .scroll { overflow-y: auto; }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+  .chips button { font-size: 10px; padding: 2px 7px; }
+</style>
+</head>
+<body>
+
+<div id="banner">
+  <p><strong>Base colours unavailable.</strong> Enable <em>Sanzō Wada Palette Library</em> in
+     this file: Assets panel → book icon → Teams. There is no API to enable a library, so this
+     step is manual.</p>
+  <button id="recheck">Re-check</button>
+</div>
+
+<div class="sec pad">
+  <div class="row spread">
+    <div class="row">
+      <h2 style="margin:0">Count</h2>
+      <div class="seg" id="counts"></div>
+    </div>
+    <div class="row">
+      <span class="muted" id="activeLabel">—</span>
+      <button id="refresh" class="ghost" title="Re-read the variables from the file. Figma cannot notify a plugin of variable edits, so anything you change in the Variables panel needs this.">↻</button>
+    </div>
+  </div>
+</div>
+
+<div class="sec pad" id="comboSec" style="display:flex;flex-direction:column;flex:1 1 auto;min-height:0">
+  <h2>Combinations</h2>
+  <div id="gridWrap"><div id="grid"></div></div>
+</div>
+
+<div class="sec pad" id="scanSec">
+  <div class="row spread" style="margin-bottom:6px">
+    <h2 style="margin:0">Unassigned colours</h2>
+    <div class="row">
+      <div class="seg" id="scanScope"></div>
+      <button id="scanClose" class="ghost" title="Back to combinations">×</button>
+    </div>
+  </div>
+  <div class="muted" id="scanSummary"></div>
+  <div id="scanList"></div>
+</div>
+
+<div class="sec pad">
+  <h2>Active members</h2>
+  <div class="members" id="members"></div>
+</div>
+
+<div class="sec pad" style="max-height:230px;display:flex;flex-direction:column">
+  <div class="row spread" style="margin-bottom:6px">
+    <h2 style="margin:0">Roles</h2>
+    <div class="row">
+      <button id="addRole">+ add role</button>
+      <button id="scan">scan colors</button>
+    </div>
+  </div>
+  <div class="row" id="addRow" style="display:none;margin-bottom:6px">
+    <input id="roleName" placeholder="Header" style="flex:1">
+    <button id="roleOk" class="on">Add</button>
+    <button id="roleCancel" class="ghost">Cancel</button>
+  </div>
+  <div class="scroll" id="roles" style="flex:1 1 auto"></div>
+</div>
+
+<div class="sec pad" id="favWrap" style="display:none">
+  <h2>Favourites</h2>
+  <div class="chips" id="favs"></div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const send = (m) => parent.postMessage({ pluginMessage: m }, '*');
+let DATA = { base: {}, combos: [] };
+let S = null;
+
+// Scan state. NAMES holds per-row name edits so a state push (which re-renders
+// the list) doesn't throw away what was typed; DONE maps a row to the role it
+// became — the colour is still unbound in the doc, so the row stays, marked.
+let SCAN = null;
+let SCOPE = 'document';
+const NAMES = {};
+const DONE = {};
+
+const $ = (id) => document.getElementById(id);
+
+function toast(text, isErr) {
+  const t = $('toast');
+  t.textContent = text || '';
+  t.className = isErr ? 'err' : '';
+}
+
+// ---- rendering
+
+function renderCounts() {
+  $('counts').innerHTML = '';
+  [2, 3, 4].forEach((n) => {
+    const b = document.createElement('button');
+    b.textContent = n;
+    if (S && S.count === String(n)) b.className = 'on';
+    b.onclick = () => send({ type: 'set-count', count: n });
+    $('counts').appendChild(b);
+  });
+}
+
+function renderGrid() {
+  const g = $('grid');
+  g.innerHTML = '';
+  if (!S) return;
+  const n = parseInt(S.count, 10);
+  const list = DATA.combos.filter((c) => c.n === n);
+
+  list.forEach((c) => {
+    const cell = document.createElement('button');
+    cell.className = 'cell' + (c.id === S.source ? ' active' : '');
+    cell.title = c.id + ' — ' + c.s.map((v) => v.split('/')[1]).join(', ');
+    const bars = document.createElement('div');
+    bars.className = 'bars';
+    c.s.forEach((v) => {
+      const i = document.createElement('i');
+      i.style.background = DATA.base[v] || '#2B2B2B';
+      bars.appendChild(i);
+    });
+    const id = document.createElement('span');
+    id.className = 'id';
+    id.textContent = c.id;
+    cell.appendChild(bars);
+    cell.appendChild(id);
+    cell.onclick = () => send({ type: 'apply-combo', id: c.id });
+    g.appendChild(cell);
+  });
+
+  if (!list.length) {
+    // Every count has combinations (120/120/108), so empty means the data message
+    // hasn't landed yet.
+    const p = document.createElement('div');
+    p.className = 'muted';
+    p.textContent = 'Loading…';
+    g.appendChild(p);
+  }
+}
+
+function renderMembers() {
+  const m = $('members');
+  m.innerHTML = '';
+  if (!S) return;
+  const n = parseInt(S.count, 10);
+  S.slots.filter((s) => s.index <= n).forEach((s) => {
+    const d = document.createElement('div');
+    d.className = 'member';
+    const sw = document.createElement('div');
+    sw.className = 'sw';
+    sw.style.background = s.hex || '#2B2B2B';
+    const lbl = document.createElement('div');
+    lbl.className = 'lbl';
+    lbl.textContent = s.index + '. ' + (s.name ? s.name.split('/')[1] : '—');
+    lbl.title = s.name || 'unset';
+    d.appendChild(sw); d.appendChild(lbl);
+    m.appendChild(d);
+  });
+}
+
+function renderRoles() {
+  const r = $('roles');
+  r.innerHTML = '';
+  if (!S) return;
+  if (!S.roles.length) {
+    r.innerHTML = '<div class="muted">No roles yet. Add one, or scan an existing design.</div>';
+    return;
+  }
+  const n = parseInt(S.count, 10);
+
+  S.roles.forEach((role) => {
+    const row = document.createElement('div');
+    row.className = 'role';
+
+    const nm = document.createElement('span');
+    nm.className = 'nm';
+    nm.textContent = role.name;
+    row.appendChild(nm);
+
+    if (role.parked) {
+      const p = document.createElement('span');
+      p.className = 'parked';
+      p.textContent = 'parked @' + role.parked;
+      p.title = 'Returns to slot ' + role.parked + ' when the count reaches ' + role.parked;
+      row.appendChild(p);
+    } else if (role.slot && role.slot > n) {
+      // Should be unreachable — applyCountRules parks these. Reachable only if the
+      // variables were edited by hand. Surface it rather than render a row that looks
+      // unassigned while actually pointing somewhere.
+      const p = document.createElement('span');
+      p.className = 'parked';
+      p.textContent = 'on ' + role.slot + '!';
+      p.title = 'Points at slot ' + role.slot + ', outside the current count of ' + n +
+                '. Change the count or reassign.';
+      row.appendChild(p);
+    }
+
+    const seg = document.createElement('div');
+    seg.className = 'seg';
+    for (let i = 1; i <= n; i++) {
+      const b = document.createElement('button');
+      const dot = document.createElement('span');
+      dot.className = 'dot';
+      const slot = S.slots[i - 1];
+      dot.style.background = slot && slot.hex ? slot.hex : '#2B2B2B';
+      b.appendChild(dot);
+      if (role.slot === i) b.className = 'on';
+      b.title = 'Assign to slot ' + i;
+      b.onclick = () => send({ type: 'assign-role', name: role.name, slot: i });
+      seg.appendChild(b);
+    }
+    const del = document.createElement('button');
+    del.className = 'ghost';
+    del.textContent = '−'; // U+2212 MINUS SIGN — matches the width of +, per Figma convention
+    del.title = 'Remove';
+    del.onclick = () => send({ type: 'delete-role', name: role.name });
+    seg.appendChild(del);
+
+    row.appendChild(seg);
+    r.appendChild(row);
+  });
+}
+
+// ---- scan
+
+const SCOPES = [
+  ['selection', 'sel', 'Current selection and its descendants'],
+  ['page', 'page', 'This page'],
+  ['document', 'doc', 'Every page in the file'],
+];
+
+function renderScanScope() {
+  const sc = $('scanScope');
+  sc.innerHTML = '';
+  SCOPES.forEach((s) => {
+    const b = document.createElement('button');
+    b.textContent = s[1];
+    b.title = s[2];
+    if (SCOPE === s[0]) b.className = 'on';
+    b.onclick = () => { SCOPE = s[0]; toast('Scanning…'); send({ type: 'scan', scope: s[0] }); };
+    sc.appendChild(b);
+  });
+}
+
+function renderScanSummary() {
+  const el = $('scanSummary');
+  el.innerHTML = '';
+  const shown = SCAN.candidates.length;
+  const line = [SCAN.total + (SCAN.total === 1 ? ' colour' : ' colours') + ' not on a Sanzō Wada variable'];
+  if (SCAN.truncated) line.push('showing the top ' + shown);
+  if (SCAN.scope === 'document') line.push(SCAN.pages + ' page(s)');
+  if (SCOPE === 'selection' && SCAN.scope === 'page') line.push('nothing selected — scanned the page');
+
+  const sk = [];
+  if (SCAN.skipped.role) sk.push(SCAN.skipped.role + ' already on roles');
+  if (SCAN.skipped.slot) sk.push(SCAN.skipped.slot + ' on slots');
+  if (sk.length) line.push('skipped ' + sk.join(', '));
+
+  if (SCAN.orphans) line.push(SCAN.orphans + ' in the Palette collection but outside the role system');
+  el.appendChild(document.createTextNode(line.join(' · ')));
+  if (SCAN.skipped.base) {
+    // Bound straight to a base colour: inside the system by name, outside it by
+    // behaviour. It will never follow another palette change.
+    const w = document.createElement('div');
+    w.className = 'warn';
+    w.textContent = SCAN.skipped.base + ' colour(s) bound directly to base colours — ' +
+      'outside the role system, and they will not follow a combination change.';
+    el.appendChild(w);
+  }
+}
+
+function candSub(c) {
+  const parts = [c.hex, c.count + (c.count === 1 ? ' use' : ' uses')];
+  if (c.orphan) parts.push(c.orphan.name + ' — in the Palette collection, not a role');
+  else if (c.variable) parts.push('bound to ' + c.variable);
+  parts.push((c.delta === 0 ? '= ' : '≈ ') + c.nearest.split('/')[1] + (c.delta ? ' Δ' + c.delta : ''));
+  if (c.layers.length) parts.push(c.layers.join(', '));
+  if (SCAN.scope === 'document') parts.push(c.pages.join(', '));
+  return parts.join(' · ');
+}
+
+function renderScanList() {
+  const list = $('scanList');
+  list.innerHTML = '';
+  if (!SCAN.candidates.length) {
+    list.innerHTML = '<div class="muted">Every colour in scope is already on a Sanzō Wada variable.</div>';
+    return;
+  }
+
+  SCAN.candidates.forEach((c) => {
+    // Only claim a row is adopted while its role actually exists — deleting the
+    // role from the list below has to put the row back.
+    const done = DONE[c.key] && S && S.roles.some((r) => r.name === DONE[c.key])
+      ? DONE[c.key] : null;
+
+    const row = document.createElement('div');
+    row.className = 'cand' + (done ? ' done' : '');
+
+    const capped = c.nodeIds.length < c.count;
+    const sw = document.createElement('div');
+    sw.className = 'sw';
+    sw.style.background = c.hex;
+    sw.title = capped
+      ? 'Select layers using ' + c.hex + ' (the first ' + c.nodeIds.length + ' of ' + c.count + ')'
+      : 'Select the layers using ' + c.hex;
+    sw.onclick = () => send({ type: 'scan-select', ids: c.nodeIds });
+    row.appendChild(sw);
+
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    const top = document.createElement('div');
+    top.className = 'top';
+
+    if (done) {
+      const mark = document.createElement('span');
+      mark.className = 'nm muted';
+      mark.style.flex = '1 1 auto';
+      mark.textContent = '✓ added as ' + done;
+      top.appendChild(mark);
+    } else {
+      const locked = c.orphan && c.orphan.remote;
+      const input = document.createElement('input');
+      input.value = NAMES[c.key] !== undefined ? NAMES[c.key] : c.suggested;
+      input.title = 'Name for the role';
+      input.disabled = locked;
+      input.oninput = () => { NAMES[c.key] = input.value; };
+
+      const add = document.createElement('button');
+      add.className = 'on';
+      add.textContent = c.orphan ? 'adopt ↻' : '+ role';
+      add.disabled = locked;
+      add.title = locked
+        ? c.orphan.name + ' comes from a library — rename it in the library file and republish'
+        : c.orphan
+          ? 'Rename ' + c.orphan.name + ' to Role/' + input.value +
+            ' — the ' + c.count + ' layer(s) using it come with it'
+          : c.slot
+            ? 'Create Role/' + input.value + ' on slot ' + c.slot
+            : 'Create this role, unassigned';
+      add.onclick = () => {
+        if (locked) return;
+        const name = input.value.trim();
+        if (!name) { toast('Give the role a name first', true); input.focus(); return; }
+        send({ type: 'scan-adopt', key: c.key, name, slot: c.slot, orphan: c.orphan ? c.orphan.id : null });
+      };
+      input.onkeydown = (e) => { if (e.key === 'Enter') add.click(); };
+      top.appendChild(input);
+
+      if (locked) {
+        const t = document.createElement('span');
+        t.className = 'tag';
+        t.textContent = 'library';
+        t.title = 'Read-only in this file';
+        top.appendChild(t);
+      } else if (c.slot) {
+        const t = document.createElement('span');
+        t.className = 'tag hit';
+        t.textContent = 'slot ' + c.slot;
+        t.title = 'Exactly the colour in slot ' + c.slot + ' — adopting assigns the role there';
+        top.appendChild(t);
+      }
+      top.appendChild(add);
+    }
+
+    const sub = document.createElement('div');
+    sub.className = 'sub';
+    sub.textContent = candSub(c);
+    sub.title = c.nearest + (c.pages.length ? '\n' + c.pages.join(', ') : '');
+
+    meta.appendChild(top);
+    meta.appendChild(sub);
+    row.appendChild(meta);
+    list.appendChild(row);
+  });
+}
+
+function renderScan() {
+  if (!SCAN) {
+    $('scanSec').style.display = 'none';
+    $('comboSec').style.display = 'flex';
+    return;
+  }
+  $('comboSec').style.display = 'none';
+  $('scanSec').style.display = 'flex';
+  renderScanScope();
+  renderScanSummary();
+  renderScanList();
+}
+
+function renderFavs() {
+  if (!S || !S.favourites.length) { $('favWrap').style.display = 'none'; return; }
+  $('favWrap').style.display = '';
+  const f = $('favs');
+  f.innerHTML = '';
+  S.favourites.forEach((id) => {
+    const b = document.createElement('button');
+    b.textContent = id;
+    b.onclick = () => send({ type: 'apply-combo', id });
+    f.appendChild(b);
+  });
+}
+
+function render() {
+  if (!S) return;
+  $('banner').className = S.baseMode === 'not-enabled' ? 'show' : '';
+  $('activeLabel').textContent = S.source ? 'Active ' + S.source : 'No combination applied';
+  renderCounts(); renderGrid(); renderMembers(); renderRoles(); renderFavs(); renderScan();
+}
+
+// ---- events
+
+$('recheck').onclick = () => send({ type: 'recheck-library' });
+$('refresh').onclick = () => send({ type: 'refresh' });
+
+// Editing a variable means leaving the panel and coming back, so regaining focus
+// is the one reliable signal that the file may have moved under us. Coalesced —
+// focus fires more than once per return trip.
+let lastRefresh = 0;
+window.addEventListener('focus', () => {
+  const now = Date.now();
+  if (now - lastRefresh < 400) return;
+  lastRefresh = now;
+  send({ type: 'refresh', quiet: true });
+});
+
+$('addRole').onclick = () => {
+  $('addRow').style.display = 'flex';
+  $('roleName').focus();
+};
+$('roleCancel').onclick = () => { $('addRow').style.display = 'none'; $('roleName').value = ''; };
+$('roleOk').onclick = () => {
+  const name = $('roleName').value.trim();
+  if (!name) return;
+  send({ type: 'add-role', name });
+  $('roleName').value = '';
+  $('addRow').style.display = 'none';
+};
+$('roleName').onkeydown = (e) => { if (e.key === 'Enter') $('roleOk').click(); };
+
+$('scan').onclick = () => { toast('Scanning…'); send({ type: 'scan', scope: SCOPE }); };
+$('scanClose').onclick = () => { SCAN = null; renderScan(); toast(''); };
+
+// ---- inbound
+
+window.onmessage = (event) => {
+  const msg = event.data.pluginMessage;
+  if (!msg) return;
+
+  if (msg.type === 'data') { DATA = { base: msg.base, combos: msg.combos }; return; }
+
+  if (msg.type === 'state') {
+    if (msg.adopted) DONE[msg.adopted.key] = msg.adopted.name;
+    S = msg.state;
+    render();
+    if (msg.toast) toast(msg.toast);
+    return;
+  }
+
+  if (msg.type === 'error') { toast(msg.message, true); return; }
+
+  if (msg.type === 'toast') { toast(msg.message); return; }
+
+  if (msg.type === 'scan-results') {
+    SCAN = msg.result;
+    renderScan();
+    toast(SCAN.total
+      ? SCAN.total + ' unassigned colour(s) — name one and click + role'
+      : 'Nothing unassigned in scope.');
+    return;
+  }
+};
+
+send({ type: 'init' });
+</script>
+</body>
+</html>
