@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    // Figma's sandbox handles modern JS; ES2018 matches what src/main.js already
+    // shipped (native async/await, for-of), so the emitted JS stays diffable
+    // against the pre-TypeScript code.js.
+    "target": "ES2018",
+    "lib": ["ES2018"],
+    // No DOM: the main thread has no document/window. ui.html is not compiled.
+    "strict": true,
+    // SES evaluates code.js in strict mode regardless; skipping the emitted
+    // "use strict" directive (inert mid-file after concatenation) keeps the
+    // output byte-comparable to the handwritten JS.
+    "alwaysStrict": false,
+    "noImplicitReturns": true,
+    "noUnusedLocals": true,
+    "noEmitOnError": true,
+    "typeRoots": ["node_modules/@types", "node_modules/@figma"],
+    "outDir": "build"
+  },
+  "include": ["src/main.ts", "src/wada.d.ts"]
+}

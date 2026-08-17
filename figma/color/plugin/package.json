@@ -1,0 +1,12 @@
+{
+  "name": "sanzo-wada-palette-plugin",
+  "private": true,
+  "scripts": {
+    "build": "./build.sh",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@figma/plugin-typings": "^1.109.0",
+    "typescript": "^5.6.0"
+  }
+}

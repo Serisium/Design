@@ -6,7 +6,7 @@ Always write the full name — **`Sanzō Wada`**, never shortened to "Wada".
 |---|---|
 | `wada-combinations.json` | 159 base colours and all 348 combinations, each resolved to a Figma variable name. Source of truth; regenerable (see below). |
 | `SPEC.md` | Plugin spec — architecture, role states, holder mechanism, verification record. |
-| `plugin/` | The Figma plugin. `./build.sh` regenerates `src/data.js` and concatenates it with `src/main.js` into `code.js`. **Edit `src/`, never `code.js`.** `ui.html` is loaded directly and needs no build. |
+| `plugin/` | The Figma plugin. `./build.sh` regenerates `src/data.js`, compiles `src/main.ts` (TypeScript — run `npm install` once for the toolchain), and concatenates them into `code.js`. **Edit `src/`, never `code.js`.** `ui.html` is loaded directly and needs no build. |
 
 ## Figma files
 

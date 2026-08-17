@@ -1,10 +1,13 @@
 #!/bin/sh
 # Assemble code.js. Figma plugins have no module loader without a bundler, so the
-# generated data and the logic are simply concatenated.
+# generated data and the compiled logic are simply concatenated. src/main.ts is
+# global-scope TypeScript — no import/export, which SES would reject anyway.
 set -e
 cd "$(dirname "$0")"
+[ -x node_modules/.bin/tsc ] || { echo 'TypeScript not installed — run: npm install' >&2; exit 1; }
 python3 build-data.py >/dev/null
-cat src/data.js src/main.js > code.js
+node_modules/.bin/tsc
+cat src/data.js build/main.js > code.js
 
 # Figma evaluates code.js under SES lockdown, which rejects the WHOLE file if the
 # word `import` is followed by optional whitespace and `(` or a comment delimiter —

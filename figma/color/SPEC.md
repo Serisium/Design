@@ -377,17 +377,25 @@ figma/color/
   wada-combinations.json        full 266KB dataset (source of truth)
   plugin/
     manifest.json               editorType figma, permissions teamlibrary, no network
-    build.sh                    regenerate data + concatenate → code.js + all static checks
+    build.sh                    regenerate data + compile TS + concatenate → code.js + all static checks
     build-data.py               266KB → 36KB; fails if any combo references an unknown base
+    package.json                dev toolchain: typescript + @figma/plugin-typings (npm install once)
+    tsconfig.json               strict; ES2018; no DOM lib (main thread has no document)
     src/data.js                 GENERATED
-    src/main.js                 bootstrap, base resolution, holder rules, scan
+    src/main.ts                 bootstrap, base resolution, holder rules, scan
+    src/wada.d.ts               declares the WADA global that data.js defines
     ui.html                     panel (referenced directly; not part of the build)
+    build/                      tsc output (gitignored)
     code.js                     GENERATED — never edit
 ```
 
-Figma has no module loader without a bundler, so `code.js` is `src/data.js` + `src/main.js`
-concatenated. **Edit `src/`; the next build overwrites `code.js`.** `ui.html` is loaded
-directly by the manifest and needs no build step.
+Figma has no module loader without a bundler, so `code.js` is `src/data.js` + compiled
+`build/main.js` concatenated. `src/main.ts` is global-scope TypeScript — no
+`import`/`export`, which SES would reject (below) and which would force a bundler in.
+Comments attached to type-only declarations are erased with them, so `code.js` is missing
+some of the prose in `main.ts`; read the source, not the artefact. **Edit `src/`; the next
+build overwrites `code.js`.** `ui.html` is loaded directly by the manifest and needs no
+build step; its inline script is still plain JS.
 
 **Figma's sandbox censors import-like expressions.** `code.js` is evaluated under SES
 lockdown, which rejects the *entire file* (`SyntaxError: possible import expression
@@ -423,7 +431,8 @@ favourites and presets have not been individually exercised against the real app
 `clientStorage` persists under the slug id (favourite → restart → still there?) is the
 open question.
 
-`build.sh` runs on every build: the data integrity check, the SES censor scan,
+`build.sh` runs on every build: the data integrity check, `tsc` (strict — the type check
+is the build; there is no emit-despite-errors path), the SES censor scan,
 `node --check code.js`, `new Function()` over the `ui.html` script block, and a
 DOM-reference check that every `$('id')` resolves to an element — the last added after a
 removed element left an orphaned handler that would have thrown at init and taken down the
