@@ -4,7 +4,7 @@
 
 const BASE_COLLECTION = 'Sanzō Wada Base';
 const PALETTE_COLLECTION = 'Sanzō Wada Palette';
-const SLOTS = ['Slot/1', 'Slot/2', 'Slot/3', 'Slot/4'];
+const SLOTS = ['Slot/1', 'Slot/2', 'Slot/3', 'Slot/4'] as const;
 const EMPTY: Record<3 | 4, string> = { 3: 'Slot/Empty3', 4: 'Slot/Empty4' };
 const GREY: RGBA = { r: 43 / 255, g: 43 / 255, b: 43 / 255, a: 1 };
 const ROLE_PREFIX = 'Role/';
@@ -76,9 +76,11 @@ async function resolveBaseMode(): Promise<BaseMode> {
 
 // Imported lazily — a combination needs at most 4 of the 159.
 async function getBaseVar(name: string): Promise<Variable | null> {
-  if (baseByName[name]) return baseByName[name];
-  if (baseMode === 'library' && libKeyByName && libKeyByName[name]) {
-    const imported = await figma.variables.importVariableByKeyAsync(libKeyByName[name]);
+  const hit = baseByName[name];
+  if (hit) return hit;
+  const key = baseMode === 'library' && libKeyByName ? libKeyByName[name] : undefined;
+  if (key) {
+    const imported = await figma.variables.importVariableByKeyAsync(key);
     baseByName[name] = imported;
     return imported;
   }
@@ -94,16 +96,27 @@ interface Palette {
   vars: VarIndex;
 }
 
+// ensurePalette guarantees the fixed names (slots, holders, Count, Source)
+// exist, so a miss here is a real bug — name it instead of letting a
+// TypeError swallow it.
+function mustGet(vars: VarIndex, name: string): Variable {
+  const v = vars.byName[name];
+  if (!v) throw new Error('Palette variable missing: ' + name);
+  return v;
+}
+
 async function ensurePalette(): Promise<Palette> {
   const cols = await figma.variables.getLocalVariableCollectionsAsync();
   let col = cols.find((c) => c.name === PALETTE_COLLECTION && !c.remote);
   let created = false;
   if (!col) {
     col = figma.variables.createVariableCollection(PALETTE_COLLECTION);
-    col.renameMode(col.modes[0].modeId, 'Active');
     created = true;
   }
-  const mode = col.modes[0].modeId;
+  const firstMode = col.modes[0];
+  if (!firstMode) throw new Error('Collection has no modes: ' + PALETTE_COLLECTION);
+  if (created) col.renameMode(firstMode.modeId, 'Active');
+  const mode = firstMode.modeId;
   let vars = await collectionVars(col);
 
   const ensureColor = (name: string): void => {
@@ -142,8 +155,7 @@ async function ensurePalette(): Promise<Palette> {
 interface RoleTarget { slot: number | null; parked: 3 | 4 | null }
 
 function isAlias(val: VariableValue | undefined): val is VariableAlias {
-  return Boolean(val) && typeof val === 'object' && 'type' in (val as object)
-    && (val as VariableAlias).type === 'VARIABLE_ALIAS';
+  return typeof val === 'object' && 'type' in val && val.type === 'VARIABLE_ALIAS';
 }
 
 function roleTarget(v: Variable, mode: string, byId: { [id: string]: Variable }): RoleTarget {
@@ -169,7 +181,7 @@ async function applyCountRules(n: number): Promise<{ role: string; to: string }[
     else if (parked === 3 && n >= 3) dest = SLOTS[2];
     else if (parked === 4 && n >= 4) dest = SLOTS[3];
     if (!dest) continue;
-    v.setValueForMode(p.mode, { type: 'VARIABLE_ALIAS', id: p.vars.byName[dest].id });
+    v.setValueForMode(p.mode, { type: 'VARIABLE_ALIAS', id: mustGet(p.vars, dest).id });
     moved.push({ role: v.name.slice(ROLE_PREFIX.length), to: dest });
   }
   return moved;
@@ -182,19 +194,21 @@ async function applyCombo(id: string): Promise<{ role: string; to: string }[]> {
   if (!combo) throw new Error('Unknown combination: ' + id);
   const p = await ensurePalette();
 
-  for (let i = 0; i < combo.s.length; i++) {
-    const bv = await getBaseVar(combo.s[i]);
-    if (!bv) throw new Error('Cannot resolve base colour: ' + combo.s[i]);
-    p.vars.byName[SLOTS[i]].setValueForMode(p.mode, { type: 'VARIABLE_ALIAS', id: bv.id });
+  for (const [i, colourName] of combo.s.entries()) {
+    const slotName = SLOTS[i];
+    if (!slotName) throw new Error('Combination has more than 4 colours: ' + combo.id);
+    const bv = await getBaseVar(colourName);
+    if (!bv) throw new Error('Cannot resolve base colour: ' + colourName);
+    mustGet(p.vars, slotName).setValueForMode(p.mode, { type: 'VARIABLE_ALIAS', id: bv.id });
   }
-  p.vars.byName['Count'].setValueForMode(p.mode, String(combo.n));
-  p.vars.byName['Source'].setValueForMode(p.mode, combo.id);
+  mustGet(p.vars, 'Count').setValueForMode(p.mode, String(combo.n));
+  mustGet(p.vars, 'Source').setValueForMode(p.mode, combo.id);
   return applyCountRules(combo.n);
 }
 
 async function setCount(n: number): Promise<{ role: string; to: string }[]> {
   const p = await ensurePalette();
-  p.vars.byName['Count'].setValueForMode(p.mode, String(n));
+  mustGet(p.vars, 'Count').setValueForMode(p.mode, String(n));
   return applyCountRules(n);
 }
 
@@ -214,7 +228,8 @@ async function assignRole(name: string, slot: number): Promise<void> {
   const p = await ensurePalette();
   const v = p.vars.byName[ROLE_PREFIX + name];
   if (!v) throw new Error('No such role: ' + name);
-  const target = p.vars.byName[SLOTS[slot - 1]];
+  const slotName = SLOTS[slot - 1];
+  const target = slotName ? p.vars.byName[slotName] : undefined;
   if (!target) throw new Error('No such slot: ' + slot);
   v.setValueForMode(p.mode, { type: 'VARIABLE_ALIAS', id: target.id });
 }
@@ -237,6 +252,7 @@ function nearestBase(hex: string): { name: string; delta: number } {
   let best = '', bestD = Infinity;
   for (const name in WADA.base) {
     const h = WADA.base[name];
+    if (!h) continue;
     const d = Math.max(
       Math.abs(parseInt(h.slice(1, 3), 16) - R),
       Math.abs(parseInt(h.slice(3, 5), 16) - G),
@@ -283,7 +299,8 @@ interface VarInfo {
 function makeVarClassifier(): (id: string) => Promise<VarInfo> {
   const cache: { [id: string]: VarInfo } = {};
   return async (id: string) => {
-    if (id in cache) return cache[id];
+    const hit = cache[id];
+    if (hit) return hit;
     const info: VarInfo = { kind: null, name: null, remote: false };
     try {
       const v = await figma.variables.getVariableByIdAsync(id);
@@ -352,7 +369,17 @@ interface Candidate {
   slot: number | null; suggested: string;
 }
 
-async function scanColors(scope: string) {
+interface ScanResult {
+  scope: 'selection' | 'page' | 'document';
+  pages: number;
+  total: number;
+  truncated: number;
+  skipped: { role: number; slot: number; base: number };
+  orphans: number;
+  candidates: Candidate[];
+}
+
+async function scanColors(scope: string): Promise<ScanResult> {
   const p = await ensurePalette();
   const roots = await scanRoots(scope);
 
@@ -385,7 +412,9 @@ async function scanColors(scope: string) {
         }
         continue;
       }
-      if (!Array.isArray(paints)) continue;
+      // A truthiness check, not Array.isArray: isArray's `any[]` predicate
+      // would erase the Paint type on its way into record().
+      if (!paints) continue;
       for (const pt of paints) record(pt, node, page);
     }
     if ('children' in node) for (const child of node.children) visit(child, page);
@@ -394,8 +423,8 @@ async function scanColors(scope: string) {
 
   // Active members, to spot a scanned colour that is already in the palette.
   const active: (string | null)[] = [];
-  for (let i = 0; i < 4; i++) {
-    const val = p.vars.byName[SLOTS[i]].valuesByMode[p.mode];
+  for (const slotName of SLOTS) {
+    const val = mustGet(p.vars, slotName).valuesByMode[p.mode];
     let name: string | null = null;
     if (isAlias(val)) {
       const bv = await figma.variables.getVariableByIdAsync(val.id);
@@ -403,7 +432,7 @@ async function scanColors(scope: string) {
     }
     active.push(name);
   }
-  const count = parseInt(String(p.vars.byName['Count'].valuesByMode[p.mode] || '4'), 10);
+  const count = parseInt(String(mustGet(p.vars, 'Count').valuesByMode[p.mode] || '4'), 10);
 
   const classify = makeVarClassifier();
   const skipped = { role: 0, slot: 0, base: 0 };
@@ -493,9 +522,10 @@ async function selectUses(ids: string[]): Promise<{ page: string; shown: number;
   const nodes: SceneNode[] = [];
   for (const id of ids) {
     const n = await figma.getNodeByIdAsync(id);
-    if (n && !n.removed) nodes.push(n as SceneNode);
+    if (n && !n.removed && n.type !== 'DOCUMENT' && n.type !== 'PAGE') nodes.push(n);
   }
-  const page = nodes.length ? pageOf(nodes[0]) : null;
+  const first = nodes[0];
+  const page = first ? pageOf(first) : null;
   if (!page) throw new Error('Those layers are gone — rescan');
   if (page.id !== figma.currentPage.id) await figma.setCurrentPageAsync(page);
   const here = nodes.filter((n) => pageOf(n) === page);
@@ -507,8 +537,19 @@ async function selectUses(ids: string[]): Promise<{ page: string; shown: number;
 // ---------------------------------------------------------------- state -> UI
 
 interface RoleState { name: string; slot: number | null; parked: 3 | 4 | null }
+interface SlotState { index: number; name: string | null; hex: string | null }
 
-async function buildState() {
+interface PluginState {
+  baseMode: BaseMode | null;
+  count: string;
+  source: string;
+  roles: RoleState[];
+  slots: SlotState[];
+  favourites: string[];
+  presets: string[];
+}
+
+async function buildState(): Promise<PluginState> {
   const p = await ensurePalette();
 
   const roles: RoleState[] = p.vars.list
@@ -519,9 +560,9 @@ async function buildState() {
     })
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  const slots: { index: number; name: string | null; hex: string | null }[] = [];
-  for (let i = 0; i < 4; i++) {
-    const val = p.vars.byName[SLOTS[i]].valuesByMode[p.mode];
+  const slots: SlotState[] = [];
+  for (const [i, slotName] of SLOTS.entries()) {
+    const val = mustGet(p.vars, slotName).valuesByMode[p.mode];
     let name: string | null = null, hex: string | null = null;
     if (isAlias(val)) {
       const bv = await figma.variables.getVariableByIdAsync(val.id);
@@ -530,13 +571,13 @@ async function buildState() {
     slots.push({ index: i + 1, name, hex });
   }
 
-  const favourites = await storageGet<string[]>('favourites', []);
-  const presets = await storageGet<{ [name: string]: string[] }>('presets', {});
+  const favourites = await storageGet('favourites', [], isStringArray);
+  const presets = await storageGet('presets', {}, isPresetMap);
 
   return {
     baseMode,
-    count: String(p.vars.byName['Count'].valuesByMode[p.mode] || '4'),
-    source: String(p.vars.byName['Source'].valuesByMode[p.mode] || ''),
+    count: String(mustGet(p.vars, 'Count').valuesByMode[p.mode] || '4'),
+    source: String(mustGet(p.vars, 'Source').valuesByMode[p.mode] || ''),
     roles, slots, favourites, presets: Object.keys(presets),
   };
 }
@@ -544,10 +585,23 @@ async function buildState() {
 // clientStorage is keyed by the plugin id. A development plugin imported with
 // no manifest id throws on every access, so reads fall back and writes report
 // failure instead of taking down init.
-async function storageGet<T>(key: string, fallback: T): Promise<T> {
+//
+// Reads are also validated: clientStorage returns whatever an older plugin
+// build left there, and a shape mismatch should fall back, not flow through
+// the UI typed as current.
+function isStringArray(v: unknown): v is string[] {
+  return Array.isArray(v) && v.every((x) => typeof x === 'string');
+}
+
+function isPresetMap(v: unknown): v is { [name: string]: string[] } {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return false;
+  return Object.values(v as { [name: string]: unknown }).every(isStringArray);
+}
+
+async function storageGet<T>(key: string, fallback: T, valid: (v: unknown) => v is T): Promise<T> {
   try {
-    const v = await figma.clientStorage.getAsync(key);
-    return v == null ? fallback : v;
+    const v: unknown = await figma.clientStorage.getAsync(key);
+    return valid(v) ? v : fallback;
   } catch (e) {
     return fallback;
   }
@@ -562,9 +616,21 @@ async function storageSet(key: string, value: unknown): Promise<boolean> {
   }
 }
 
-async function push(extra?: { [key: string]: unknown }): Promise<void> {
+// Everything the plugin can post to ui.html — the other half of UIMessage.
+type PluginMessage =
+  | { type: 'data'; base: WadaData['base']; combos: WadaCombo[] }
+  | { type: 'state'; state: PluginState; toast?: string; adopted?: { key: string; name: string } }
+  | { type: 'scan-results'; result: ScanResult }
+  | { type: 'toast'; message: string }
+  | { type: 'error'; message: string };
+
+function send(msg: PluginMessage): void {
+  figma.ui.postMessage(msg);
+}
+
+async function push(extra?: { toast?: string; adopted?: { key: string; name: string } }): Promise<void> {
   const state = await buildState();
-  figma.ui.postMessage(Object.assign({ type: 'state', state }, extra || {}));
+  send(Object.assign({ type: 'state' as const, state }, extra || {}));
 }
 
 // ---------------------------------------------------------------- message loop
@@ -588,12 +654,12 @@ type UIMessage =
   | { type: 'apply-preset'; name: string }
   | { type: 'close' };
 
-figma.ui.onmessage = async (msg: UIMessage) => {
+async function handle(msg: UIMessage): Promise<void> {
   try {
     switch (msg.type) {
       case 'init':
         await resolveBaseMode();
-        figma.ui.postMessage({ type: 'data', base: WADA.base, combos: WADA.combos });
+        send({ type: 'data', base: WADA.base, combos: WADA.combos });
         await push();
         break;
 
@@ -641,7 +707,7 @@ figma.ui.onmessage = async (msg: UIMessage) => {
 
       case 'scan': {
         const result = await scanColors(msg.scope);
-        figma.ui.postMessage({ type: 'scan-results', result });
+        send({ type: 'scan-results', result });
         break;
       }
 
@@ -659,7 +725,7 @@ figma.ui.onmessage = async (msg: UIMessage) => {
 
       case 'scan-select': {
         const r = await selectUses(msg.ids);
-        figma.ui.postMessage({
+        send({
           type: 'toast',
           message: 'Selected ' + r.shown + ' layer(s) on ' + r.page +
             (r.elsewhere ? ' · ' + r.elsewhere + ' more on other pages' : ''),
@@ -668,7 +734,7 @@ figma.ui.onmessage = async (msg: UIMessage) => {
       }
 
       case 'toggle-favourite': {
-        const favs = await storageGet<string[]>('favourites', []);
+        const favs = await storageGet('favourites', [], isStringArray);
         const i = favs.indexOf(msg.id);
         if (i >= 0) favs.splice(i, 1); else favs.unshift(msg.id);
         const ok = await storageSet('favourites', favs.slice(0, 24));
@@ -677,7 +743,7 @@ figma.ui.onmessage = async (msg: UIMessage) => {
       }
 
       case 'save-preset': {
-        const presets = await storageGet<{ [name: string]: string[] }>('presets', {});
+        const presets = await storageGet('presets', {}, isPresetMap);
         const state = await buildState();
         presets[msg.name] = state.roles.map((r) => r.name);
         const ok = await storageSet('presets', presets);
@@ -687,7 +753,7 @@ figma.ui.onmessage = async (msg: UIMessage) => {
       }
 
       case 'apply-preset': {
-        const presets = await storageGet<{ [name: string]: string[] }>('presets', {});
+        const presets = await storageGet('presets', {}, isPresetMap);
         const names = presets[msg.name] || [];
         const p = await ensurePalette();
         let added = 0;
@@ -704,6 +770,14 @@ figma.ui.onmessage = async (msg: UIMessage) => {
     }
   } catch (e) {
     const m = e && typeof e === 'object' && 'message' in e ? (e as { message: unknown }).message : null;
-    figma.ui.postMessage({ type: 'error', message: String(m || e) });
+    send({ type: 'error', message: String(m || e) });
   }
+}
+
+// One message at a time. Handlers read palette state, mutate, then re-read;
+// interleaving two of them can double-create the palette collection. handle()
+// catches everything, so the chain never rejects.
+let queue: Promise<void> = Promise.resolve();
+figma.ui.onmessage = (msg: UIMessage) => {
+  queue = queue.then(() => handle(msg));
 };

@@ -14,6 +14,7 @@
     "noImplicitReturns": true,
     "noUnusedLocals": true,
     "noEmitOnError": true,
+    "noUncheckedIndexedAccess": true,
     "typeRoots": ["node_modules/@types", "node_modules/@figma"],
     "outDir": "build"
   },

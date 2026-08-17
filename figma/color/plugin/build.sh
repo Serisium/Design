@@ -4,9 +4,10 @@
 # global-scope TypeScript — no import/export, which SES would reject anyway.
 set -e
 cd "$(dirname "$0")"
-[ -x node_modules/.bin/tsc ] || { echo 'TypeScript not installed — run: npm install' >&2; exit 1; }
+[ -x node_modules/.bin/tsc ] && [ -x node_modules/.bin/eslint ] || { echo 'Toolchain not installed — run: npm install' >&2; exit 1; }
 python3 build-data.py >/dev/null
 node_modules/.bin/tsc
+node_modules/.bin/eslint src/main.ts src/wada.d.ts
 cat src/data.js build/main.js > code.js
 
 # Figma evaluates code.js under SES lockdown, which rejects the WHOLE file if the

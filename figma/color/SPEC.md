@@ -376,11 +376,12 @@ figma/color/
   SPEC.md
   wada-combinations.json        full 266KB dataset (source of truth)
   plugin/
-    manifest.json               editorType figma, permissions teamlibrary, no network
+    manifest.json               editorType figma, dynamic-page, permissions teamlibrary, no network
     build.sh                    regenerate data + compile TS + concatenate → code.js + all static checks
     build-data.py               266KB → 36KB; fails if any combo references an unknown base
-    package.json                dev toolchain: typescript + @figma/plugin-typings (npm install once)
-    tsconfig.json               strict; ES2018; no DOM lib (main thread has no document)
+    package.json                dev toolchain: typescript, plugin typings, eslint (npm install once)
+    tsconfig.json               strict + noUncheckedIndexedAccess; ES2018; no DOM lib
+    .eslintrc.json              eslint:recommended + typescript-eslint + Figma's official rules
     src/data.js                 GENERATED
     src/main.ts                 bootstrap, base resolution, holder rules, scan
     src/wada.d.ts               declares the WADA global that data.js defines
@@ -432,7 +433,8 @@ favourites and presets have not been individually exercised against the real app
 open question.
 
 `build.sh` runs on every build: the data integrity check, `tsc` (strict — the type check
-is the build; there is no emit-despite-errors path), the SES censor scan,
+is the build; there is no emit-despite-errors path), ESLint with Figma's official plugin
+ruleset, the SES censor scan,
 `node --check code.js`, `new Function()` over the `ui.html` script block, and a
 DOM-reference check that every `$('id')` resolves to an element — the last added after a
 removed element left an orphaned handler that would have thrown at init and taken down the

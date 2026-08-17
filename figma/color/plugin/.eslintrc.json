@@ -1,0 +1,13 @@
+{
+  "root": true,
+  "parser": "@typescript-eslint/parser",
+  "parserOptions": { "project": "./tsconfig.json" },
+  "plugins": ["@typescript-eslint", "@figma/figma-plugins"],
+  "extends": [
+    "eslint:recommended",
+    "plugin:@typescript-eslint/recommended",
+    "plugin:@figma/figma-plugins/recommended"
+  ],
+  "env": { "es2018": true },
+  "ignorePatterns": ["*.js", "build/", "node_modules/"]
+}

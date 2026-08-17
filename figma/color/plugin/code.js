@@ -59,14 +59,25 @@ async function resolveBaseMode() {
 }
 // Imported lazily — a combination needs at most 4 of the 159.
 async function getBaseVar(name) {
-    if (baseByName[name])
-        return baseByName[name];
-    if (baseMode === 'library' && libKeyByName && libKeyByName[name]) {
-        const imported = await figma.variables.importVariableByKeyAsync(libKeyByName[name]);
+    const hit = baseByName[name];
+    if (hit)
+        return hit;
+    const key = baseMode === 'library' && libKeyByName ? libKeyByName[name] : undefined;
+    if (key) {
+        const imported = await figma.variables.importVariableByKeyAsync(key);
         baseByName[name] = imported;
         return imported;
     }
     return null;
+}
+// ensurePalette guarantees the fixed names (slots, holders, Count, Source)
+// exist, so a miss here is a real bug — name it instead of letting a
+// TypeError swallow it.
+function mustGet(vars, name) {
+    const v = vars.byName[name];
+    if (!v)
+        throw new Error('Palette variable missing: ' + name);
+    return v;
 }
 async function ensurePalette() {
     const cols = await figma.variables.getLocalVariableCollectionsAsync();
@@ -74,10 +85,14 @@ async function ensurePalette() {
     let created = false;
     if (!col) {
         col = figma.variables.createVariableCollection(PALETTE_COLLECTION);
-        col.renameMode(col.modes[0].modeId, 'Active');
         created = true;
     }
-    const mode = col.modes[0].modeId;
+    const firstMode = col.modes[0];
+    if (!firstMode)
+        throw new Error('Collection has no modes: ' + PALETTE_COLLECTION);
+    if (created)
+        col.renameMode(firstMode.modeId, 'Active');
+    const mode = firstMode.modeId;
     let vars = await collectionVars(col);
     const ensureColor = (name) => {
         if (vars.byName[name])
@@ -103,8 +118,7 @@ async function ensurePalette() {
     return { col, mode, created, vars };
 }
 function isAlias(val) {
-    return Boolean(val) && typeof val === 'object' && 'type' in val
-        && val.type === 'VARIABLE_ALIAS';
+    return typeof val === 'object' && 'type' in val && val.type === 'VARIABLE_ALIAS';
 }
 function roleTarget(v, mode, byId) {
     const val = v.valuesByMode[mode];
@@ -139,7 +153,7 @@ async function applyCountRules(n) {
             dest = SLOTS[3];
         if (!dest)
             continue;
-        v.setValueForMode(p.mode, { type: 'VARIABLE_ALIAS', id: p.vars.byName[dest].id });
+        v.setValueForMode(p.mode, { type: 'VARIABLE_ALIAS', id: mustGet(p.vars, dest).id });
         moved.push({ role: v.name.slice(ROLE_PREFIX.length), to: dest });
     }
     return moved;
@@ -150,19 +164,22 @@ async function applyCombo(id) {
     if (!combo)
         throw new Error('Unknown combination: ' + id);
     const p = await ensurePalette();
-    for (let i = 0; i < combo.s.length; i++) {
-        const bv = await getBaseVar(combo.s[i]);
+    for (const [i, colourName] of combo.s.entries()) {
+        const slotName = SLOTS[i];
+        if (!slotName)
+            throw new Error('Combination has more than 4 colours: ' + combo.id);
+        const bv = await getBaseVar(colourName);
         if (!bv)
-            throw new Error('Cannot resolve base colour: ' + combo.s[i]);
-        p.vars.byName[SLOTS[i]].setValueForMode(p.mode, { type: 'VARIABLE_ALIAS', id: bv.id });
+            throw new Error('Cannot resolve base colour: ' + colourName);
+        mustGet(p.vars, slotName).setValueForMode(p.mode, { type: 'VARIABLE_ALIAS', id: bv.id });
     }
-    p.vars.byName['Count'].setValueForMode(p.mode, String(combo.n));
-    p.vars.byName['Source'].setValueForMode(p.mode, combo.id);
+    mustGet(p.vars, 'Count').setValueForMode(p.mode, String(combo.n));
+    mustGet(p.vars, 'Source').setValueForMode(p.mode, combo.id);
     return applyCountRules(combo.n);
 }
 async function setCount(n) {
     const p = await ensurePalette();
-    p.vars.byName['Count'].setValueForMode(p.mode, String(n));
+    mustGet(p.vars, 'Count').setValueForMode(p.mode, String(n));
     return applyCountRules(n);
 }
 async function addRole(rawName) {
@@ -184,7 +201,8 @@ async function assignRole(name, slot) {
     const v = p.vars.byName[ROLE_PREFIX + name];
     if (!v)
         throw new Error('No such role: ' + name);
-    const target = p.vars.byName[SLOTS[slot - 1]];
+    const slotName = SLOTS[slot - 1];
+    const target = slotName ? p.vars.byName[slotName] : undefined;
     if (!target)
         throw new Error('No such slot: ' + slot);
     v.setValueForMode(p.mode, { type: 'VARIABLE_ALIAS', id: target.id });
@@ -205,6 +223,8 @@ function nearestBase(hex) {
     let best = '', bestD = Infinity;
     for (const name in WADA.base) {
         const h = WADA.base[name];
+        if (!h)
+            continue;
         const d = Math.max(Math.abs(parseInt(h.slice(1, 3), 16) - R), Math.abs(parseInt(h.slice(3, 5), 16) - G), Math.abs(parseInt(h.slice(5, 7), 16) - B));
         if (d < bestD) {
             bestD = d;
@@ -239,8 +259,9 @@ function paletteKind(name) {
 function makeVarClassifier() {
     const cache = {};
     return async (id) => {
-        if (id in cache)
-            return cache[id];
+        const hit = cache[id];
+        if (hit)
+            return hit;
         const info = { kind: null, name: null, remote: false };
         try {
             const v = await figma.variables.getVariableByIdAsync(id);
@@ -330,7 +351,9 @@ async function scanColors(scope) {
                 }
                 continue;
             }
-            if (!Array.isArray(paints))
+            // A truthiness check, not Array.isArray: isArray's `any[]` predicate
+            // would erase the Paint type on its way into record().
+            if (!paints)
                 continue;
             for (const pt of paints)
                 record(pt, node, page);
@@ -344,8 +367,8 @@ async function scanColors(scope) {
             visit(n, g.page);
     // Active members, to spot a scanned colour that is already in the palette.
     const active = [];
-    for (let i = 0; i < 4; i++) {
-        const val = p.vars.byName[SLOTS[i]].valuesByMode[p.mode];
+    for (const slotName of SLOTS) {
+        const val = mustGet(p.vars, slotName).valuesByMode[p.mode];
         let name = null;
         if (isAlias(val)) {
             const bv = await figma.variables.getVariableByIdAsync(val.id);
@@ -354,7 +377,7 @@ async function scanColors(scope) {
         }
         active.push(name);
     }
-    const count = parseInt(String(p.vars.byName['Count'].valuesByMode[p.mode] || '4'), 10);
+    const count = parseInt(String(mustGet(p.vars, 'Count').valuesByMode[p.mode] || '4'), 10);
     const classify = makeVarClassifier();
     const skipped = { role: 0, slot: 0, base: 0 };
     const candidates = [];
@@ -455,10 +478,11 @@ async function selectUses(ids) {
     const nodes = [];
     for (const id of ids) {
         const n = await figma.getNodeByIdAsync(id);
-        if (n && !n.removed)
+        if (n && !n.removed && n.type !== 'DOCUMENT' && n.type !== 'PAGE')
             nodes.push(n);
     }
-    const page = nodes.length ? pageOf(nodes[0]) : null;
+    const first = nodes[0];
+    const page = first ? pageOf(first) : null;
     if (!page)
         throw new Error('Those layers are gone — rescan');
     if (page.id !== figma.currentPage.id)
@@ -478,8 +502,8 @@ async function buildState() {
     })
         .sort((a, b) => a.name.localeCompare(b.name));
     const slots = [];
-    for (let i = 0; i < 4; i++) {
-        const val = p.vars.byName[SLOTS[i]].valuesByMode[p.mode];
+    for (const [i, slotName] of SLOTS.entries()) {
+        const val = mustGet(p.vars, slotName).valuesByMode[p.mode];
         let name = null, hex = null;
         if (isAlias(val)) {
             const bv = await figma.variables.getVariableByIdAsync(val.id);
@@ -490,22 +514,34 @@ async function buildState() {
         }
         slots.push({ index: i + 1, name, hex });
     }
-    const favourites = await storageGet('favourites', []);
-    const presets = await storageGet('presets', {});
+    const favourites = await storageGet('favourites', [], isStringArray);
+    const presets = await storageGet('presets', {}, isPresetMap);
     return {
         baseMode,
-        count: String(p.vars.byName['Count'].valuesByMode[p.mode] || '4'),
-        source: String(p.vars.byName['Source'].valuesByMode[p.mode] || ''),
+        count: String(mustGet(p.vars, 'Count').valuesByMode[p.mode] || '4'),
+        source: String(mustGet(p.vars, 'Source').valuesByMode[p.mode] || ''),
         roles, slots, favourites, presets: Object.keys(presets),
     };
 }
 // clientStorage is keyed by the plugin id. A development plugin imported with
 // no manifest id throws on every access, so reads fall back and writes report
 // failure instead of taking down init.
-async function storageGet(key, fallback) {
+//
+// Reads are also validated: clientStorage returns whatever an older plugin
+// build left there, and a shape mismatch should fall back, not flow through
+// the UI typed as current.
+function isStringArray(v) {
+    return Array.isArray(v) && v.every((x) => typeof x === 'string');
+}
+function isPresetMap(v) {
+    if (typeof v !== 'object' || v === null || Array.isArray(v))
+        return false;
+    return Object.values(v).every(isStringArray);
+}
+async function storageGet(key, fallback, valid) {
     try {
         const v = await figma.clientStorage.getAsync(key);
-        return v == null ? fallback : v;
+        return valid(v) ? v : fallback;
     }
     catch (e) {
         return fallback;
@@ -520,16 +556,19 @@ async function storageSet(key, value) {
         return false;
     }
 }
+function send(msg) {
+    figma.ui.postMessage(msg);
+}
 async function push(extra) {
     const state = await buildState();
-    figma.ui.postMessage(Object.assign({ type: 'state', state }, extra || {}));
+    send(Object.assign({ type: 'state', state }, extra || {}));
 }
-figma.ui.onmessage = async (msg) => {
+async function handle(msg) {
     try {
         switch (msg.type) {
             case 'init':
                 await resolveBaseMode();
-                figma.ui.postMessage({ type: 'data', base: WADA.base, combos: WADA.combos });
+                send({ type: 'data', base: WADA.base, combos: WADA.combos });
                 await push();
                 break;
             // Figma emits no event for variable edits — `documentchange` covers nodes
@@ -569,7 +608,7 @@ figma.ui.onmessage = async (msg) => {
                 break;
             case 'scan': {
                 const result = await scanColors(msg.scope);
-                figma.ui.postMessage({ type: 'scan-results', result });
+                send({ type: 'scan-results', result });
                 break;
             }
             case 'scan-adopt': {
@@ -585,7 +624,7 @@ figma.ui.onmessage = async (msg) => {
             }
             case 'scan-select': {
                 const r = await selectUses(msg.ids);
-                figma.ui.postMessage({
+                send({
                     type: 'toast',
                     message: 'Selected ' + r.shown + ' layer(s) on ' + r.page +
                         (r.elsewhere ? ' · ' + r.elsewhere + ' more on other pages' : ''),
@@ -593,7 +632,7 @@ figma.ui.onmessage = async (msg) => {
                 break;
             }
             case 'toggle-favourite': {
-                const favs = await storageGet('favourites', []);
+                const favs = await storageGet('favourites', [], isStringArray);
                 const i = favs.indexOf(msg.id);
                 if (i >= 0)
                     favs.splice(i, 1);
@@ -604,7 +643,7 @@ figma.ui.onmessage = async (msg) => {
                 break;
             }
             case 'save-preset': {
-                const presets = await storageGet('presets', {});
+                const presets = await storageGet('presets', {}, isPresetMap);
                 const state = await buildState();
                 presets[msg.name] = state.roles.map((r) => r.name);
                 const ok = await storageSet('presets', presets);
@@ -613,7 +652,7 @@ figma.ui.onmessage = async (msg) => {
                 break;
             }
             case 'apply-preset': {
-                const presets = await storageGet('presets', {});
+                const presets = await storageGet('presets', {}, isPresetMap);
                 const names = presets[msg.name] || [];
                 const p = await ensurePalette();
                 let added = 0;
@@ -633,6 +672,13 @@ figma.ui.onmessage = async (msg) => {
     }
     catch (e) {
         const m = e && typeof e === 'object' && 'message' in e ? e.message : null;
-        figma.ui.postMessage({ type: 'error', message: String(m || e) });
+        send({ type: 'error', message: String(m || e) });
     }
+}
+// One message at a time. Handlers read palette state, mutate, then re-read;
+// interleaving two of them can double-create the palette collection. handle()
+// catches everything, so the chain never rejects.
+let queue = Promise.resolve();
+figma.ui.onmessage = (msg) => {
+    queue = queue.then(() => handle(msg));
 };
