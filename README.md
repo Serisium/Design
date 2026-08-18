@@ -10,4 +10,5 @@ Explore color combinations from Sanzō Wada's book _A Dictionary of Color Combin
 - Switch colors inside of a palette and see your design change immediately
 - Choose between different lightness values your palette, or leave them in their original tone.
 
-![A video showing functionality of a Figma color dictionary plugin. The user is selecting whole swatches of colors, which are automatically applied to a sample card.](media/sanzo wada colors.mov)
+<video width="630" height="300" src="https://github.com/user-attachments/assets/01b605c8-4ecc-4488-a9bc-866af517232d"></video>
+_A video showing functionality of a Figma color dictionary plugin. The user is selecting whole swatches of colors, which are automatically applied to a sample card._
