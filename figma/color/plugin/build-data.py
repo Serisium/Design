@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Generate src/data.js from ../wada-combinations.json.
+"""Generate src/data.js from ../wada-combinations.json + wada-tones.json.
 
 Trims the 266KB source to just what the plugin needs: base colour name -> hex,
-and each combination's ordered base-variable names. Drops sourceHex/delta/family.
+each combination's ordered base-variable names, and the tone ramps (which
+build-tones.mjs generates; the plugin ships those hexes verbatim and does no
+colour math). Drops sourceHex/delta/family.
 
 Paths are relative to this file, so the tree can be moved without edits:
     figma/color/wada-combinations.json  ->  figma/color/plugin/src/data.js
@@ -12,9 +14,13 @@ import json, os
 HERE = os.path.dirname(os.path.abspath(__file__))   # figma/color/plugin
 COLOR = os.path.dirname(HERE)                        # figma/color
 SRC = os.path.join(COLOR, 'wada-combinations.json')
+TONES = os.path.join(HERE, 'wada-tones.json')
 OUT = os.path.join(HERE, 'src', 'data.js')
 
 d = json.load(open(SRC))
+if not os.path.exists(TONES):
+    raise SystemExit('wada-tones.json missing — run: node build-tones.mjs')
+t = json.load(open(TONES))
 
 base = {}
 for b in d['baseColours']:
@@ -33,7 +39,20 @@ missing = sorted({v for c in combos for v in c['s'] if v not in base})
 if missing:
     raise SystemExit('combination references unknown base variables: %s' % missing[:5])
 
-payload = {'base': base, 'combos': combos}
+# Tone ramps must cover base exactly, carry the full ladder, and pass through
+# the seed verbatim at the natural rung. Any drift means the ramps were built
+# from a different base set — regenerate, never patch.
+ladder, tones = t['ladder'], t['seeds']
+out_of_sync = sorted(set(base) ^ set(tones))
+if out_of_sync:
+    raise SystemExit('tones out of sync with base: %s — run: node build-tones.mjs' % out_of_sync[:5])
+for name, ramp in tones.items():
+    if set(ramp['rungs']) != set(ladder):
+        raise SystemExit('%s: rung set differs from the ladder — run: node build-tones.mjs' % name)
+    if ramp['rungs'][str(ramp['seed'])] != base[name]:
+        raise SystemExit('%s: natural rung is not the printed hex — run: node build-tones.mjs' % name)
+
+payload = {'base': base, 'combos': combos, 'tones': tones}
 
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
 with open(OUT, 'w') as f:

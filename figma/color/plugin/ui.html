@@ -78,6 +78,20 @@
   .parked { color: var(--figma-color-text-warning); font-size: 9px; white-space: nowrap; }
   .muted { color: var(--figma-color-text-secondary); }
 
+  /* tone strip — the ladder in the assigned slot's hue; underline = true seed
+     rung, ring = pinned tone, follower = no ring */
+  .tone { display: flex; gap: 1px; padding-bottom: 4px; flex: 0 0 auto; }
+  .tone i { width: 7px; height: 13px; cursor: pointer; border-radius: 1px; position: relative; }
+  .tone i:hover { outline: 1px solid var(--figma-color-border-brand-strong); z-index: 1; }
+  .tone i.pin { outline: 1.5px solid var(--figma-color-border-brand-strong);
+                outline-offset: 1px; z-index: 1; }
+  .tone i.seed::after {
+    content: ''; position: absolute; left: 0; right: 0; bottom: -4px; height: 2px;
+    background: var(--figma-color-text); border-radius: 1px;
+  }
+  .tonelbl { font-size: 9px; color: var(--figma-color-text-secondary); white-space: nowrap;
+             flex: 0 0 22px; text-align: right; font-variant-numeric: tabular-nums; }
+
   /* scan — takes over the combination grid's space while open */
   #scanSec { display: none; flex-direction: column; flex: 1 1 auto; min-height: 0; }
   #scanList { overflow-y: auto; flex: 1 1 auto; min-height: 60px; }
@@ -302,8 +316,9 @@ function renderRoles() {
     if (role.parked) {
       const p = document.createElement('span');
       p.className = 'parked';
-      p.textContent = 'parked @' + role.parked;
-      p.title = 'Returns to slot ' + role.parked + ' when the count reaches ' + role.parked;
+      p.textContent = 'parked @' + role.parked + (role.parkedTone ? ' · ' + role.parkedTone : ' (seed)');
+      p.title = 'Returns to slot ' + role.parked + (role.parkedTone ? ' at tone ' + role.parkedTone : '') +
+        ' when the count reaches ' + role.parked;
       row.appendChild(p);
     } else if (role.slot && role.slot > n) {
       // Should be unreachable — applyCountRules parks these. Reachable only if the
@@ -326,19 +341,69 @@ function renderRoles() {
       const slot = S.slots[i - 1];
       dot.style.background = slot && slot.hex ? slot.hex : '#2B2B2B';
       b.appendChild(dot);
-      if (role.slot === i) b.className = 'on';
-      b.title = 'Assign to slot ' + i;
-      b.onclick = () => send({ type: 'assign-role', name: role.name, slot: i });
+      if (role.slot === i) {
+        b.className = 'on';
+        b.title = role.tone != null
+          ? 'Pinned at ' + role.tone + ' — click to follow the seed again'
+          : 'Following the seed of slot ' + i;
+      } else {
+        b.title = 'Assign to slot ' + i +
+          (role.tone != null || role.parkedTone != null ? ' (keeps the pinned tone)' : '');
+      }
+      b.onclick = () => {
+        if (role.slot === i) {
+          // Re-clicking the selected slot is the only way back to following;
+          // a follower re-click is a no-op.
+          if (role.tone != null) send({ type: 'follow-role', name: role.name });
+          return;
+        }
+        send({ type: 'assign-role', name: role.name, slot: i });
+      };
       seg.appendChild(b);
     }
+    row.appendChild(seg);
+
+    // Tone strip + label. Underline marks the true seed rung; a ring marks a
+    // pinned tone; a follower has no ring. Rung clicks only ever pin — the
+    // underlined rung included, which freezes the current weight.
+    const mySlot = role.slot ? S.slots[role.slot - 1] : null;
+    if (mySlot && mySlot.rungs) {
+      const strip = document.createElement('div');
+      strip.className = 'tone';
+      const rungs = Object.keys(mySlot.rungs).map(Number).sort((a, b) => a - b);
+      rungs.forEach((t) => {
+        const cell = document.createElement('i');
+        cell.style.background = mySlot.rungs[t];
+        if (t === mySlot.seedRung) cell.className = 'seed';
+        if (t === role.tone) cell.className += (cell.className ? ' ' : '') + 'pin';
+        cell.title = 'Pin ' + role.name + ' at ' + t +
+          (t === mySlot.seedRung ? " — the seed's own rung; freezes the current weight" : '') +
+          ' (' + mySlot.rungs[t] + ')';
+        cell.onclick = () => send({ type: 'pin-role', name: role.name, tone: t });
+        strip.appendChild(cell);
+      });
+      row.appendChild(strip);
+
+      // Always a bare tone number: the seed's rung for a follower, the pinned
+      // rung otherwise. Pin state reads from the ring, coincident pin from the
+      // ring sitting on the underline — never from the label.
+      const lbl = document.createElement('span');
+      lbl.className = 'tonelbl';
+      lbl.textContent = String(role.tone == null ? (mySlot.seedRung || '') : role.tone);
+      lbl.title = role.tone == null
+        ? 'Following the seed — rides wherever the next apply puts it'
+        : role.tone === mySlot.seedRung
+          ? 'Pinned at ' + role.tone + ", currently the seed's own rung — identical today, diverges on the next apply"
+          : 'Pinned at ' + role.tone + ' — a stable weight; a derived colour Sanzō Wada never printed';
+      row.appendChild(lbl);
+    }
+
     const del = document.createElement('button');
     del.className = 'ghost';
     del.textContent = '−'; // U+2212 MINUS SIGN — matches the width of +, per Figma convention
     del.title = 'Remove';
     del.onclick = () => send({ type: 'delete-role', name: role.name });
-    seg.appendChild(del);
-
-    row.appendChild(seg);
+    row.appendChild(del);
     r.appendChild(row);
   });
 }
@@ -395,7 +460,8 @@ function candSub(c) {
   const parts = [c.hex, c.count + (c.count === 1 ? ' use' : ' uses')];
   if (c.orphan) parts.push(c.orphan.name + ' — in the Palette collection, not a role');
   else if (c.variable) parts.push('bound to ' + c.variable);
-  parts.push((c.delta === 0 ? '= ' : '≈ ') + c.nearest.split('/')[1] + (c.delta ? ' Δ' + c.delta : ''));
+  parts.push((c.delta === 0 ? '= ' : '≈ ') + c.nearest.split('/')[1] +
+    (c.tone ? ' ' + c.tone : '') + (c.delta ? ' Δ' + c.delta : ''));
   if (c.layers.length) parts.push(c.layers.join(', '));
   if (SCAN.scope === 'document') parts.push(c.pages.join(', '));
   return parts.join(' · ');
@@ -477,8 +543,9 @@ function renderScanList() {
       } else if (c.slot) {
         const t = document.createElement('span');
         t.className = 'tag hit';
-        t.textContent = 'slot ' + c.slot;
-        t.title = 'Exactly the colour in slot ' + c.slot + ' — adopting assigns the role there';
+        t.textContent = 'slot ' + c.slot + (c.tone ? ' · ' + c.tone : '');
+        t.title = 'Exactly ' + (c.tone ? 'tone ' + c.tone + ' of' : 'the colour in') + ' slot ' + c.slot +
+          ' — adopting assigns the role there as a follower';
         top.appendChild(t);
       }
       top.appendChild(add);

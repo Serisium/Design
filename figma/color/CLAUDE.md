@@ -6,7 +6,7 @@ Always write the full name — **`Sanzō Wada`**, never shortened to "Wada".
 |---|---|
 | `wada-combinations.json` | 159 base colours and all 348 combinations, each resolved to a Figma variable name. Source of truth; regenerable (see below). |
 | `SPEC.md` | Plugin spec — architecture, role states, holder mechanism, verification record. |
-| `plugin/` | The Figma plugin. `./build.sh` regenerates `src/data.js`, compiles `src/main.ts` (TypeScript — run `npm install` once for the toolchain), and concatenates them into `code.js`. **Edit `src/`, never `code.js`.** `ui.html` is loaded directly and needs no build. |
+| `plugin/` | The Figma plugin. `./build.sh` regenerates `wada-tones.json` (culori) and `src/data.js`, compiles `src/main.ts` (TypeScript — run `npm install` once for the toolchain), and concatenates them into `code.js`. **Edit `src/`, never `code.js`.** `ui.html` is loaded directly and needs no build. |
 
 ## Figma files
 
@@ -20,8 +20,10 @@ Always write the full name — **`Sanzō Wada`**, never shortened to "Wada".
 - **`Sanzō Wada Base`** — 159 colour variables, English names grouped by hue family
   (`Red/Burnt Sienna`). Fixed historical values; these essentially never change.
   **Published.**
-- **`Sanzō Wada Palette`** — `Slot/1–4` (aliases into the base collection), `Slot/Empty3`
-  and `Slot/Empty4` (dark-grey holders for parked roles), `Role/*`, `Count`, `Source`.
+- **`Sanzō Wada Palette`** — `Slot/1–4` (aliases into the base collection) and their
+  `Slot/N/50–950` tone rungs (raw computed values, rewritten on apply), `Slot/Empty3` and
+  `Slot/Empty4` holders plus their rungs (park roles, preserving tone), `Role/*`, `Count`,
+  `Source`.
   Working state. **`hiddenFromPublishing = true`, deliberately** — every consuming file gets
   its own local copy, and publishing it would both collide by name and force
   republish-and-accept on every slot change.

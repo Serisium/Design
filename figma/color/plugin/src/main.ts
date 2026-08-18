@@ -6,6 +6,10 @@ const BASE_COLLECTION = 'Sanzō Wada Base';
 const PALETTE_COLLECTION = 'Sanzō Wada Palette';
 const SLOTS = ['Slot/1', 'Slot/2', 'Slot/3', 'Slot/4'] as const;
 const EMPTY: Record<3 | 4, string> = { 3: 'Slot/Empty3', 4: 'Slot/Empty4' };
+// The tone ladder's rung numbers. The L* targets live in build-tones.mjs —
+// the plugin does no colour math, it ships WADA.tones verbatim.
+const RUNGS = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950] as const;
+const RUNG_SET: Set<number> = new Set(RUNGS);
 const GREY: RGBA = { r: 43 / 255, g: 43 / 255, b: 43 / 255, a: 1 };
 const ROLE_PREFIX = 'Role/';
 const SCAN_MAX = 300;    // candidates sent to the UI; the surplus is reported, not hidden
@@ -132,9 +136,16 @@ async function ensurePalette(): Promise<Palette> {
     v.setValueForMode(mode, value);
   };
 
-  SLOTS.forEach(ensureColor);
-  ensureColor(EMPTY[3]);
-  ensureColor(EMPTY[4]);
+  // Each slot is a seed plus its 11 rungs; each holder likewise parks pinned
+  // roles per rung (Slot/Empty3/600 remembers "slot 3 at 600").
+  for (const s of SLOTS) {
+    ensureColor(s);
+    for (const t of RUNGS) ensureColor(s + '/' + t);
+  }
+  for (const holder of [EMPTY[3], EMPTY[4]]) {
+    ensureColor(holder);
+    for (const t of RUNGS) ensureColor(holder + '/' + t);
+  }
   ensureString('Count', '4');
   ensureString('Source', '', ['TEXT_CONTENT']);
 
@@ -152,7 +163,16 @@ async function ensurePalette(): Promise<Palette> {
 // The alias IS the memory. Reassigning overwrites the holder pointer, which is
 // exactly why a deliberate choice survives a count round-trip.
 
-interface RoleTarget { slot: number | null; parked: 3 | 4 | null }
+// tone null = follower (alias → Slot/N, rides the seed); tone set = pinned
+// (alias → Slot/N/T, stable weight). Parked variants carry the same split.
+interface RoleTarget {
+  slot: number | null;
+  tone: number | null;
+  parked: 3 | 4 | null;
+  parkedTone: number | null;
+}
+
+const NO_TARGET: RoleTarget = { slot: null, tone: null, parked: null, parkedTone: null };
 
 function isAlias(val: VariableValue | undefined): val is VariableAlias {
   return typeof val === 'object' && 'type' in val && val.type === 'VARIABLE_ALIAS';
@@ -160,13 +180,51 @@ function isAlias(val: VariableValue | undefined): val is VariableAlias {
 
 function roleTarget(v: Variable, mode: string, byId: { [id: string]: Variable }): RoleTarget {
   const val = v.valuesByMode[mode];
-  if (!isAlias(val)) return { slot: null, parked: null };
+  if (!isAlias(val)) return NO_TARGET;
   const t = byId[val.id];
-  if (!t) return { slot: null, parked: null };
-  if (/^Slot\/[1-4]$/.test(t.name)) return { slot: parseInt(t.name.slice(5), 10), parked: null };
-  if (t.name === EMPTY[3]) return { slot: null, parked: 3 };
-  if (t.name === EMPTY[4]) return { slot: null, parked: 4 };
-  return { slot: null, parked: null };
+  if (!t) return NO_TARGET;
+  let m = /^Slot\/([1-4])(?:\/(\d+))?$/.exec(t.name);
+  if (m) {
+    const tone = m[2] ? parseInt(m[2], 10) : null;
+    if (tone !== null && !RUNG_SET.has(tone)) return NO_TARGET; // hand-made name, not ours
+    return { slot: parseInt(m[1] || '0', 10), tone, parked: null, parkedTone: null };
+  }
+  m = /^Slot\/Empty([34])(?:\/(\d+))?$/.exec(t.name);
+  if (m) {
+    const parkedTone = m[2] ? parseInt(m[2], 10) : null;
+    if (parkedTone !== null && !RUNG_SET.has(parkedTone)) return NO_TARGET;
+    return { slot: null, tone: null, parked: m[1] === '3' ? 3 : 4, parkedTone };
+  }
+  return NO_TARGET;
+}
+
+// Rung values are deterministic from seed + rung, so they can be (re)written
+// whenever the slot's seed is resolvable — not only on apply. Without this, a
+// pin in a file whose rungs were never applied lands on the grey placeholder:
+// the alias moves, the colour doesn't. Compare-before-write keeps it cheap and
+// avoids dirtying the file on every call.
+async function syncSlotRungs(p: Palette, slotIndex: number): Promise<void> {
+  const slotName = SLOTS[slotIndex - 1];
+  if (!slotName) return;
+  const val = mustGet(p.vars, slotName).valuesByMode[p.mode];
+  if (!isAlias(val)) return;
+  const bv = await figma.variables.getVariableByIdAsync(val.id);
+  if (!bv) return;
+  const ramp = WADA.tones[bv.name];
+  if (!ramp) return;
+  const leaf = bv.name.split('/')[1] || bv.name;
+  for (const t of RUNGS) {
+    const hx = ramp.rungs[String(t)];
+    if (!hx) continue;
+    const rv = mustGet(p.vars, slotName + '/' + t);
+    const cur = rv.valuesByMode[p.mode];
+    const next = hexToRgba(hx);
+    const same = typeof cur === 'object' && 'r' in cur
+      && cur.r === next.r && cur.g === next.g && cur.b === next.b;
+    if (!same) rv.setValueForMode(p.mode, next);
+    const desc = leaf + ' ' + t;
+    if (rv.description !== desc) rv.description = desc;
+  }
 }
 
 async function applyCountRules(n: number): Promise<{ role: string; to: string }[]> {
@@ -174,13 +232,19 @@ async function applyCountRules(n: number): Promise<{ role: string; to: string }[
   const moved: { role: string; to: string }[] = [];
   for (const v of p.vars.list) {
     if (!v.name.startsWith(ROLE_PREFIX)) continue;
-    const { slot, parked } = roleTarget(v, p.mode, p.vars.byId);
+    const { slot, tone, parked, parkedTone } = roleTarget(v, p.mode, p.vars.byId);
+    // Parking and restoring both carry the tone: Slot/3/600 parks to
+    // Slot/Empty3/600 and comes back to Slot/3/600 — (slot, tone) is the
+    // whole memory, still stored entirely in the alias.
     let dest: string | null = null;
-    if (slot === 3 && n < 3) dest = EMPTY[3];
-    else if (slot === 4 && n < 4) dest = EMPTY[4];
-    else if (parked === 3 && n >= 3) dest = SLOTS[2];
-    else if (parked === 4 && n >= 4) dest = SLOTS[3];
+    if (slot === 3 && n < 3) dest = tone ? EMPTY[3] + '/' + tone : EMPTY[3];
+    else if (slot === 4 && n < 4) dest = tone ? EMPTY[4] + '/' + tone : EMPTY[4];
+    else if (parked === 3 && n >= 3) dest = parkedTone ? SLOTS[2] + '/' + parkedTone : SLOTS[2];
+    else if (parked === 4 && n >= 4) dest = parkedTone ? SLOTS[3] + '/' + parkedTone : SLOTS[3];
     if (!dest) continue;
+    // A pinned restore lands on a rung variable — make sure it holds the ramp.
+    const rm = /^Slot\/([1-4])\/\d+$/.exec(dest);
+    if (rm) await syncSlotRungs(p, parseInt(rm[1] || '0', 10));
     v.setValueForMode(p.mode, { type: 'VARIABLE_ALIAS', id: mustGet(p.vars, dest).id });
     moved.push({ role: v.name.slice(ROLE_PREFIX.length), to: dest });
   }
@@ -200,6 +264,9 @@ async function applyCombo(id: string): Promise<{ role: string; to: string }[]> {
     const bv = await getBaseVar(colourName);
     if (!bv) throw new Error('Cannot resolve base colour: ' + colourName);
     mustGet(p.vars, slotName).setValueForMode(p.mode, { type: 'VARIABLE_ALIAS', id: bv.id });
+    // Rungs are raw computed values, not aliases — tones never touch the
+    // library. The description is stamped in the same pass as the value.
+    await syncSlotRungs(p, i + 1);
   }
   mustGet(p.vars, 'Count').setValueForMode(p.mode, String(combo.n));
   mustGet(p.vars, 'Source').setValueForMode(p.mode, combo.id);
@@ -229,9 +296,42 @@ async function assignRole(name: string, slot: number): Promise<void> {
   const v = p.vars.byName[ROLE_PREFIX + name];
   if (!v) throw new Error('No such role: ' + name);
   const slotName = SLOTS[slot - 1];
-  const target = slotName ? p.vars.byName[slotName] : undefined;
+  if (!slotName) throw new Error('No such slot: ' + slot);
+  // Moving slots carries the tone state: a follower stays a follower, a
+  // pinned 500 stays pinned at 500 — parked roles included.
+  const t = roleTarget(v, p.mode, p.vars.byId);
+  const tone = t.tone !== null ? t.tone : t.parkedTone;
+  if (tone !== null) await syncSlotRungs(p, slot);
+  const target = p.vars.byName[tone !== null ? slotName + '/' + tone : slotName];
   if (!target) throw new Error('No such slot: ' + slot);
   v.setValueForMode(p.mode, { type: 'VARIABLE_ALIAS', id: target.id });
+}
+
+// Rung clicks only ever pin; re-clicking the selected slot is the only way
+// back to following. Pinning the seed's own rung is allowed — it freezes the
+// current weight against future applies.
+async function pinRole(name: string, tone: number): Promise<void> {
+  if (!RUNG_SET.has(tone)) throw new Error('No such tone: ' + tone);
+  const p = await ensurePalette();
+  const v = p.vars.byName[ROLE_PREFIX + name];
+  if (!v) throw new Error('No such role: ' + name);
+  const t = roleTarget(v, p.mode, p.vars.byId);
+  if (t.slot === null) throw new Error('Assign ' + name + ' to a slot before pinning a tone');
+  const slotName = SLOTS[t.slot - 1];
+  if (!slotName) throw new Error('No such slot: ' + t.slot);
+  await syncSlotRungs(p, t.slot);
+  v.setValueForMode(p.mode, { type: 'VARIABLE_ALIAS', id: mustGet(p.vars, slotName + '/' + tone).id });
+}
+
+async function followRole(name: string): Promise<void> {
+  const p = await ensurePalette();
+  const v = p.vars.byName[ROLE_PREFIX + name];
+  if (!v) throw new Error('No such role: ' + name);
+  const t = roleTarget(v, p.mode, p.vars.byId);
+  if (t.slot === null || t.tone === null) return; // not pinned to a live slot — nothing to drop
+  const slotName = SLOTS[t.slot - 1];
+  if (!slotName) return;
+  v.setValueForMode(p.mode, { type: 'VARIABLE_ALIAS', id: mustGet(p.vars, slotName).id });
 }
 
 async function deleteRole(name: string): Promise<void> {
@@ -245,22 +345,54 @@ async function deleteRole(name: string): Promise<void> {
 function hex2(n: number): string { return Math.round(n * 255).toString(16).padStart(2, '0'); }
 function toHex(c: RGB | RGBA): string { return '#' + hex2(c.r) + hex2(c.g) + hex2(c.b); }
 
-function nearestBase(hex: string): { name: string; delta: number } {
+function hexToRgba(hex: string): RGBA {
+  return {
+    r: parseInt(hex.slice(1, 3), 16) / 255,
+    g: parseInt(hex.slice(3, 5), 16) / 255,
+    b: parseInt(hex.slice(5, 7), 16) / 255,
+    a: 1,
+  };
+}
+
+// Nearest-match resolves against rungs, not just seeds — a scanned colour may
+// be a derived weight of a printed colour. Each seed's natural rung IS the
+// printed hex, so exact seed hits still resolve with delta 0.
+interface RungEntry { name: string; rung: number; seedRung: number; r: number; g: number; b: number }
+let rungIndex: RungEntry[] | null = null;
+
+function buildRungIndex(): RungEntry[] {
+  const idx: RungEntry[] = [];
+  for (const name in WADA.tones) {
+    const ramp = WADA.tones[name];
+    if (!ramp) continue;
+    for (const t of RUNGS) {
+      const h = ramp.rungs[String(t)];
+      if (!h) continue;
+      idx.push({
+        name, rung: t, seedRung: ramp.seed,
+        r: parseInt(h.slice(1, 3), 16),
+        g: parseInt(h.slice(3, 5), 16),
+        b: parseInt(h.slice(5, 7), 16),
+      });
+    }
+  }
+  return idx;
+}
+
+function nearestRung(hex: string): { name: string; rung: number; seedRung: number; delta: number } {
+  if (!rungIndex) rungIndex = buildRungIndex();
   const R = parseInt(hex.slice(1, 3), 16);
   const G = parseInt(hex.slice(3, 5), 16);
   const B = parseInt(hex.slice(5, 7), 16);
-  let best = '', bestD = Infinity;
-  for (const name in WADA.base) {
-    const h = WADA.base[name];
-    if (!h) continue;
-    const d = Math.max(
-      Math.abs(parseInt(h.slice(1, 3), 16) - R),
-      Math.abs(parseInt(h.slice(3, 5), 16) - G),
-      Math.abs(parseInt(h.slice(5, 7), 16) - B)
-    );
-    if (d < bestD) { bestD = d; best = name; }
+  let name = '', rung = 0, seedRung = 0, bestD = Infinity;
+  for (const e of rungIndex) {
+    const d = Math.max(Math.abs(e.r - R), Math.abs(e.g - G), Math.abs(e.b - B));
+    // Prefer the printed colour on a tie — clamped dark rungs can repeat a hex.
+    if (d < bestD || (d === bestD && e.rung === e.seedRung && rung !== seedRung)) {
+      bestD = d; name = e.name; rung = e.rung; seedRung = e.seedRung;
+    }
   }
-  return { name: best, delta: bestD };
+  return { name, rung, seedRung, delta: bestD };
 }
 
 // Layer names that say nothing about what the colour is *for*. A role named
@@ -366,6 +498,8 @@ interface Candidate {
   layers: string[]; pages: string[]; nodeIds: string[];
   variable: string | null; orphan: OrphanRef | null;
   nearest: string; delta: number;
+  /** Matched rung when it is not the seed's natural rung; null on a seed hit. */
+  tone: number | null;
   slot: number | null; suggested: string;
 }
 
@@ -449,14 +583,17 @@ async function scanColors(scope: string): Promise<ScanResult> {
       if (info.kind === 'orphan') { orphan = { id: rec.bound, name: info.name, remote: info.remote }; orphans++; }
       else foreign = info.name; // bound, but to somebody else's variable
     }
-    const match = nearestBase(rec.hex);
-    // Only an exact hit gets auto-assigned. A near match is a suggestion, not a mapping.
+    const match = nearestRung(rec.hex);
+    // Only an exact hit gets auto-assigned, and adopting creates a FOLLOWER
+    // even on a rung hit — the scanned design used that colour; an inference
+    // is not a decision. A near match is a suggestion, not a mapping.
     const slot = match.delta === 0 ? active.indexOf(match.name) : -1;
     candidates.push({
       key: rec.key, hex: rec.hex, count: rec.count,
       layers: rec.layers, pages: rec.pages, nodeIds: rec.nodeIds,
       variable: foreign, orphan: orphan,
       nearest: match.name, delta: match.delta,
+      tone: match.rung === match.seedRung ? null : match.rung,
       slot: slot >= 0 && slot < count ? slot + 1 : null,
       suggested: orphan ? leafName(orphan.name || '') : suggestRoleName(rec.layers, match.name),
     });
@@ -536,8 +673,22 @@ async function selectUses(ids: string[]): Promise<{ page: string; shown: number;
 
 // ---------------------------------------------------------------- state -> UI
 
-interface RoleState { name: string; slot: number | null; parked: 3 | 4 | null }
-interface SlotState { index: number; name: string | null; hex: string | null }
+interface RoleState {
+  name: string;
+  slot: number | null;
+  tone: number | null;
+  parked: 3 | 4 | null;
+  parkedTone: number | null;
+}
+interface SlotState {
+  index: number;
+  name: string | null;
+  hex: string | null;
+  /** Natural rung of the seed currently in this slot — the strip's underline. */
+  seedRung: number | null;
+  /** The seed's ramp, rung -> hex — the strip renders in this hue. */
+  rungs: { [rung: string]: string } | null;
+}
 
 interface PluginState {
   baseMode: BaseMode | null;
@@ -556,7 +707,10 @@ async function buildState(): Promise<PluginState> {
     .filter((v) => v.name.startsWith(ROLE_PREFIX))
     .map((v) => {
       const t = roleTarget(v, p.mode, p.vars.byId);
-      return { name: v.name.slice(ROLE_PREFIX.length), slot: t.slot, parked: t.parked };
+      return {
+        name: v.name.slice(ROLE_PREFIX.length),
+        slot: t.slot, tone: t.tone, parked: t.parked, parkedTone: t.parkedTone,
+      };
     })
     .sort((a, b) => a.name.localeCompare(b.name));
 
@@ -564,11 +718,17 @@ async function buildState(): Promise<PluginState> {
   for (const [i, slotName] of SLOTS.entries()) {
     const val = mustGet(p.vars, slotName).valuesByMode[p.mode];
     let name: string | null = null, hex: string | null = null;
+    let seedRung: number | null = null, rungs: { [rung: string]: string } | null = null;
     if (isAlias(val)) {
       const bv = await figma.variables.getVariableByIdAsync(val.id);
-      if (bv) { name = bv.name; hex = WADA.base[bv.name] || null; }
+      if (bv) {
+        name = bv.name;
+        hex = WADA.base[bv.name] || null;
+        const ramp = WADA.tones[bv.name];
+        if (ramp) { seedRung = ramp.seed; rungs = ramp.rungs; }
+      }
     }
-    slots.push({ index: i + 1, name, hex });
+    slots.push({ index: i + 1, name, hex, seedRung, rungs });
   }
 
   const favourites = await storageGet('favourites', [], isStringArray);
@@ -645,6 +805,8 @@ type UIMessage =
   | { type: 'set-count'; count: number }
   | { type: 'add-role'; name: string }
   | { type: 'assign-role'; name: string; slot: number }
+  | { type: 'pin-role'; name: string; tone: number }
+  | { type: 'follow-role'; name: string }
   | { type: 'delete-role'; name: string }
   | { type: 'scan'; scope: string }
   | { type: 'scan-adopt'; key: string; name: string; slot: number | null; orphan: string | null }
@@ -697,6 +859,16 @@ async function handle(msg: UIMessage): Promise<void> {
 
       case 'assign-role':
         await assignRole(msg.name, msg.slot);
+        await push();
+        break;
+
+      case 'pin-role':
+        await pinRole(msg.name, msg.tone);
+        await push();
+        break;
+
+      case 'follow-role':
+        await followRole(msg.name);
         await push();
         break;
 

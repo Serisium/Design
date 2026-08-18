@@ -5,6 +5,7 @@
 set -e
 cd "$(dirname "$0")"
 [ -x node_modules/.bin/tsc ] && [ -x node_modules/.bin/eslint ] || { echo 'Toolchain not installed — run: npm install' >&2; exit 1; }
+node build-tones.mjs >/dev/null
 python3 build-data.py >/dev/null
 node_modules/.bin/tsc
 node_modules/.bin/eslint src/main.ts src/wada.d.ts

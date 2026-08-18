@@ -379,6 +379,11 @@ figma/color/
     manifest.json               editorType figma, dynamic-page, permissions teamlibrary, no network
     build.sh                    regenerate data + compile TS + concatenate → code.js + all static checks
     build-data.py               266KB → 36KB; fails if any combo references an unknown base
+                                or the tone ramps drift from base
+    build-tones.mjs             ramp generation — culori does the colour math; seed exact
+                                at its natural rung
+    wada-tones.json             GENERATED — 159 ramps × 11 rungs; one seed per line for
+                                reviewable diffs
     package.json                dev toolchain: typescript, plugin typings, eslint (npm install once)
     tsconfig.json               strict + noUncheckedIndexedAccess; ES2018; no DOM lib
     .eslintrc.json              eslint:recommended + typescript-eslint + Figma's official rules
@@ -449,8 +454,12 @@ the scan live.
 
 ## Perceptual lightness — tones
 
-Status: **designed, not built.** Everything below extends the built system and is additive;
-nothing in it is implemented.
+Status: **built; live verification pending.** `build-tones.mjs` (colour math via culori)
+generates `wada-tones.json`; apply writes rung values with stamped descriptions; holders
+and `scan colors` are tone-aware; the role row renders the tone strip with the pin/follow
+gestures wired (`pin-role`, `follow-role`; slot moves carry tone). The holder battery and
+the gesture set have been re-run with tones against stubs — the live in-Figma pass is
+still owed.
 
 ### Why a numbered ladder
 
@@ -481,7 +490,7 @@ Snapping targets in CIE L\* (tunable; roughly a Material/Tailwind midpoint):
 
 A colour's natural rung is the nearest target to its measured L\*. Generation must pass
 through the seed **exactly** at its natural rung — Burnt Sienna's 600 *is* `#ae5224`, not a
-regenerated approximation of it. (The `=seed` tag compares rung *numbers*, not hexes —
+regenerated approximation of it. (Coincidence checks compare rung *numbers*, not hexes —
 gamut clamping can make two adjacent rungs share a hex at the dark end.)
 
 ### Naming — three layers
@@ -489,7 +498,7 @@ gamut clamping can make two adjacent rungs share a hex at the dark end.)
 | Layer | Where | Shape | Notes |
 |---|---|---|---|
 | Ramp data | plugin — `wada-tones.json` → `data.js` | seed × rung → hex | Generated at build time; not a Figma collection |
-| Slot grid | `Sanzō Wada Palette`, local | `Slot/2` (seed, unchanged) · `Slot/2/600` | Seed aliases into Base; rungs hold raw computed values, rewritten on apply |
+| Slot grid | `Sanzō Wada Palette`, local | `Slot/2` (seed, unchanged) · `Slot/2/600` | Seed aliases into Base; rungs hold raw computed values, written on apply and healed on pin/assign/restore |
 | Roles | `Sanzō Wada Palette`, local | `Role/Header` — semantic, tone-free | Tone lives in the alias, never the name |
 
 - **Tones are plugin data, not a published collection.** A role's alias only needs
@@ -526,14 +535,16 @@ shape stores the distinction; the UI must always display it.
 ### Role row
 
 ```
- Header    ① [②] ③ ④    ▁▂▃▄▅̲▆▇█     seed          no ring; underline only
- Accent    ①  ② [③] ④    ▁▂▃▄[▅̲]▆▇█   500 · =seed   ring on the underlined rung
- Muted     ①  ② [③] ④    ▁▂▃▄▅̲▆[▇]█   700           ring and underline apart
+ Header    ① [②] ③ ④    ▆▆▆▆▆̲▆▆▆    600    no ring; underline only — following
+ Accent    ①  ② [③] ④    ▆▆▆▆[▆̲]▆▆▆   500    ring on the underlined rung — pinned at the seed's rung
+ Muted     ①  ② [③] ④    ▆▆▆▆▆̲▆[▆]▆   700    ring and underline apart — pinned
 ```
 
-The tone strip renders the ladder in the assigned slot's current hue. The **underline marks
-the true seed rung**; a ring marks a pinned tone; a follower has no ring. There is no
-separate seed cell — the slot button already *is* the seed swatch.
+The tone strip renders the ladder in the assigned slot's current hue, at equal cell
+heights. The **underline marks the true seed rung**; a ring marks a pinned tone; a
+follower has no ring. There is no separate seed cell — the slot button already *is* the
+seed swatch. The label is always a bare tone number — the seed's rung for a follower, the
+pinned rung otherwise; pin state reads from the ring, never from the label.
 
 | Gesture | From | Result |
 |---|---|---|
@@ -542,16 +553,19 @@ separate seed cell — the slot button already *is* the seed swatch.
 | Click selected slot ② | following | no-op |
 | Click a rung | any | pin there — the underlined rung included, which freezes the current weight |
 
-Rung clicks only ever pin; the slot re-click is the only way back to following. Never label
-the coincident-pinned state bare `500` — the `=seed` tag is where the difference shows.
+Rung clicks only ever pin; the slot re-click is the only way back to following. The
+coincident pin is distinguished by the ring sitting on the underlined rung, not by the
+label.
 
 ### Holders generalise
 
 `Slot/Empty3` parks followers; `Slot/Empty3/T` parks pinned roles (~24 holder variables in
 all). The alias still carries the entire memory — now (slot, tone) — so the no-side-table
 design survives, and every rule in the state machine has a tone-preserving analogue.
-Indicators: `parked @3 (seed)` vs `parked @3 · 600`. The verified assertion battery must be
-re-run with tones; this is the riskiest part of the extension.
+Indicators: `parked @3 (seed)` vs `parked @3 · 600`. The assertion battery has been re-run
+with tones against stubs — park/restore preserves the tone, repoint-while-parked wins over
+the holder, bystander roles untouched — but not yet live; this remains the riskiest part
+of the extension.
 
 ### Costs and scan
 
